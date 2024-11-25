@@ -58,8 +58,8 @@ pub fn construct_neighborhood_map(depth_map: &Array2<f32>, eps: f32, is_rand : b
                 for delta in deltas {
                     let surr_inds = (&array![x_ind as i32, y_ind as i32] + &delta);
 
-                    let [del_x_ind, del_y_ind] = *surr_inds.as_slice().expect("Array should be contiguous and of size 2") else {
-                        todo!("Please handle the case where the array is not of size 2!");
+                    let [del_x_ind, del_y_ind] = *surr_inds.as_slice().expect("Index should size 2") else {
+                        todo!("Please handle the case where the index is not of size 2!");
                     };
 
                     if let (Some(x), Some(y)) = (del_x_ind.to_usize(), del_y_ind.to_usize()) {
