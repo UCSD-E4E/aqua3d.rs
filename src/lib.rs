@@ -1,19 +1,17 @@
 mod seathru;
-
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }
 
 #[cfg(test)]
 mod tests {
-    use core::num;
     // Includes
+    use seathru::{RgbdData, Seathru};
+
     #[allow(unused)]
     use std::collections::VecDeque;
     use anyhow::{Context, Result};
 
-    use itertools::Dedup;
-    use nalgebra::DimName;
     #[allow(unused)]
     use num_traits::ToPrimitive;
 
@@ -37,10 +35,22 @@ mod tests {
             [21.11,  23.05,  22.98,  1.001,  1.003]  // Fifth row
         ];
 
-        let (nmap, num_neighborhoods) = seathru::construct_neighborhood_map(&depth_matrix, 0.1, false)
-                                                                                    .context("Failed to set up neighborhood map")?;
+        let img_data =  Array2::<u8>::zeros((3, 3));
 
-        println!("{:?}", nmap);
+        #[allow(unused)]
+        let image = RgbdData {
+            img : &img_data,
+            depth_map : &depth_matrix
+        };
+
+        let _res = image.run_pipeline(false)?;
+        let (nmap, _num_neighborhoods) = image.construct_neighborhood_map(0.1, false)
+                                                                                        .context("Failed to set up neighborhood map")?;
+
+        dbg!(&nmap);
+        dbg!(&depth_matrix);
+        // let (nmap, num_neighborhoods) = seathru::construct_neighborhood_map(&depth_matrix, 0.1, false)
+                                                                                    // .context("Failed to set up neighborhood map")?;
 
         Ok(())
     }   
