@@ -1,6 +1,6 @@
 mod image_proc;
 
-use image_proc::ImageProcessing;
+use image_proc::{ImageProcessing, TwoDimensionTransforms};
 use ndarray::{array, s, Array, Array1, Array2, Array3};
 use ndarray_stats::QuantileExt;
 use num_traits::ToPrimitive;
@@ -17,7 +17,7 @@ use ordered_float::OrderedFloat;
 use rand::Rng;
 
 use itertools::Itertools;
-use std::{cmp::min, collections::VecDeque};
+use std::{cmp::min, collections::VecDeque, ops::RangeBounds};
 
 use anyhow::{anyhow, Context, Result};
 
@@ -48,6 +48,7 @@ pub trait Seathru {
 
 impl<'a> Seathru for RgbdData<'a> {
     fn run_pipeline(&self, is_rand: bool) -> Result<()> {
+        #[allow(unused)]
         let estimation_pts = self
             .find_backscatter_estimation_points(10, 0.05, 20, 0.3)
             .context("Failed to set up backscatter estimation points")?;
@@ -57,6 +58,7 @@ impl<'a> Seathru for RgbdData<'a> {
         let (nmap, _num_neighborhoods) = self
             .construct_neighborhood_map(1e-5, is_rand)
             .context("Failed to set up neighborhood map")?;
+
         Ok(())
     }
 
@@ -81,8 +83,8 @@ impl<'a> Seathru for RgbdData<'a> {
         let depth_ranges = Array1::linspace(min_depth, max_depth, num_bins + 1);
 
         let img_norms: Array2<f32> = self.img.grayscale();
+        let mut num_pts_sent = 0;
 
-        let mut point_ind = 0;
         for i in 0..depth_ranges.len() - 1 {
             let location_closure = |&((_i, _j), &value): &((usize, usize), &f32)| {
                 value > min_depth_thresh && value >= depth_ranges[i] && value <= depth_ranges[i + 1]
@@ -90,17 +92,10 @@ impl<'a> Seathru for RgbdData<'a> {
 
             let locs = self.depth_map.indexed_iter().filter(location_closure);
 
-            // let xlocs : Vec<usize> =self.depth_map.indexed_iter().filter(location_closure).map(|((x, _), _)| x).collect();
-            // let ylocs : Vec<usize> =self.depth_map.indexed_iter().filter(location_closure).map(|((_, y), _)| y).collect();
-
-            // TODO: Find more efficient way to do this without cloning. GPT says to make a filter condition and reuse that instead.
+            // TODO: Find more efficient way to do this without cloning. GPT says to make a filter condition and reuse that instead?
             let norms = locs.clone().map(|(index, _)| img_norms[index]);
-
-            let pixels = locs
-                .clone()
-                .map(|((x, y), _)| self.img.slice(s![x, y, ..]).to_owned());
-
             let depths = locs.clone().map(|(_, val)| *val);
+            let pixels = locs.map(|((x, y), _)| self.img.slice(s![x, y, ..]).to_owned());
 
             // Data is each of the last vectors zipped together
             let data: Vec<(f32, Array1<u8>)> = norms
@@ -111,23 +106,22 @@ impl<'a> Seathru for RgbdData<'a> {
                 .collect();
 
             // TODO: Find how to make sure these integer conversions are safer and what gets rounded/cut off/put to max int val, etc.
-            // Also, this is currently a conversion but what even is this? Why are we doing an iterator starting at 1 and not 0?
-            let iter_to_add = 1..min(
+            // Also, this is currently a Python -> Rust conversion but why would they do an iterator starting at 1 and not 0? Starting 0 here
+            let pts_to_send = num_pts_sent..min(
                 (fraction * data.len() as f32).ceil() as usize,
                 max_vals as usize,
             );
-            let vals_to_add = data
-                .get(iter_to_add.clone())
-                .ok_or_else(|| anyhow!("Could not properly find estimated backscatter points"))?;
+            
+            // Increment num_pts_sent
+            num_pts_sent = pts_to_send.end + 1; 
 
-            for ind in iter_to_add {
-                let temp = data.get(ind).ok_or_else(|| {
-                    anyhow!("Could not properly find estimated backscatter points")
+            for next_pt_ind in pts_to_send {
+                let data_pt = data.get(next_pt_ind).ok_or_else(|| {
+                    anyhow!("Could not properly access estimated backscatter points")
                 })?;
-                points[self.R][ind + point_ind] = (temp.0, temp.1[self.R]);
-                points[self.G][ind + point_ind] = (temp.0, temp.1[self.G]);
-                points[self.B][ind + point_ind] = (temp.0, temp.1[self.B]);
-                point_ind += 1;
+                points[self.R][next_pt_ind] = (data_pt.0, data_pt.1[self.R]);
+                points[self.G][next_pt_ind] = (data_pt.0, data_pt.1[self.G]);
+                points[self.B][next_pt_ind] = (data_pt.0, data_pt.1[self.B]);
             }
         }
 
@@ -142,11 +136,7 @@ impl<'a> Seathru for RgbdData<'a> {
         // Discretization loop
         // Condition is simple way to make sure the boolean map of zero values isn't empty
         while *neighborhood_map.min()? == 0 {
-            let zero_map: Vec<(usize, usize)> = neighborhood_map
-                .indexed_iter()
-                .filter(|&((_, _), &value)| value == 0)
-                .map(|(index, _)| index)
-                .collect();
+            let zero_map: Vec<(usize, usize)> = neighborhood_map.np_where(0);
 
             let (start_x, start_y) = match is_rand {
                 true => zero_map[rand::thread_rng().gen_range(0..zero_map.len())],
@@ -156,8 +146,7 @@ impl<'a> Seathru for RgbdData<'a> {
             let mut q = VecDeque::<(usize, usize)>::new();
             q.push_back((start_x, start_y));
 
-            let mut x_ind: usize;
-            let mut y_ind: usize;
+            let (mut x_ind, mut y_ind);
 
             while q.len() != 0 {
                 (x_ind, y_ind) = q.pop_front().context("Empty queue")?;
@@ -169,18 +158,10 @@ impl<'a> Seathru for RgbdData<'a> {
 
                     // Add in neighboring points. x_ind and y_ind are already positive or 0, so no need to check that.
                     // Array of arrays for all Deltas from (x_ind, y_ind) to have the 4 surrounding (non-diagonal) points.
-                    let deltas = array![(-1, 0), (1, 0), (0, -1), (0, 1)]
-                        .map(|x| array![x.0 as i32, x.1 as i32]);
+                    let nearby_inds = array![(-1, 0), (1, 0), (0, -1), (0, 1)]
+                        .map(|del| (del.0 + x_ind as i32, del.1 + y_ind as i32));
 
-                    for delta in deltas {
-                        let surr_inds = &array![x_ind as i32, y_ind as i32] + &delta;
-
-                        let [del_x_ind, del_y_ind] =
-                            *surr_inds.as_slice().context("Index should size 2")?
-                        else {
-                            todo!("Please handle the case where the index is not of size 2!");
-                        };
-
+                    for (del_x_ind, del_y_ind) in nearby_inds {
                         if let (Some(x), Some(y)) = (del_x_ind.to_usize(), del_y_ind.to_usize()) {
                             if let Some(val) = neighborhood_map.get((x, y)) {
                                 if *val == 0 {
@@ -196,13 +177,13 @@ impl<'a> Seathru for RgbdData<'a> {
             num_neighborhoods += 1;
         }
 
-        // TODO: Why are we doing equality on floating point?? is depth integer then? Currently using
+        // TODO: Why are we doing equality on floating point?? is depth integer then? Currently using the below value
+        // Still can't think of any real reason to avoid modifying this to num_neighborhood.map(|x| x - 1) so it starts at 0.
         let practically_zero = *self.depth_map.min()? + 1e-5;
 
         // Boolean map for depth indices that are 'practically zero', get vector of indices whose depths are
         // 'practically zero', then return iterator of the neighborhood_map values at those indices, collect() on iterator.
-        let zero_depth_nmap: Vec<i32> = self
-            .depth_map
+        let zero_depth_nmap: Vec<i32> = (self.depth_map)
             .map(|x| *x < practically_zero)
             .indexed_iter()
             .filter(|&((_, _), &is_zero)| is_zero)

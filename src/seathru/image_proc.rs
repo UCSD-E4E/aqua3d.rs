@@ -1,4 +1,4 @@
-use std::{iter::Filter, ops::Div};
+use std::{iter::Filter, ops::{Add, Div}};
 
 use ndarray::iter::IndexedIter;
 /// image_proc.rs
@@ -32,5 +32,29 @@ where
     fn grayscale(&self) -> Array2<f32> {
         self.map(|val| (Into::<f32>::into(*val) / 3.0))
             .sum_axis(Axis(2))
+    }
+}
+
+pub trait TwoDimensionTransforms<A> {
+    fn np_where(&self, val: A) -> Vec<(usize, usize)>;
+}
+
+impl<A> TwoDimensionTransforms<A> for Array2<A>
+where
+    A: Ord + Copy,
+{
+    fn np_where(&self, val: A) -> Vec<(usize, usize)> {
+        self.indexed_iter()
+            .filter(|&((_, _), &mat_val)| mat_val == val)
+            .map(|(index, _)| index)
+            .collect()
+    }
+}
+
+impl<T: Add<Output = T>> Add for (T, T) {
+    type Output = (T, T);
+
+    fn add(self, other: Self) -> Self::Output {
+        (self.0 + other.0, self.1 + other.1)
     }
 }
