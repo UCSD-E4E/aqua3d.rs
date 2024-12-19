@@ -1,8 +1,10 @@
+use std::collections::{HashMap, HashSet};
+
 use anyhow::Context;
 use bytemuck::{Pod, Zeroable};
 use ndarray::Array2;
 use thiserror::Error;
-use wgpu::{util::DeviceExt, Device, Queue};
+use wgpu::{util::DeviceExt, Buffer, CommandEncoder, Device, Queue, ShaderModule};
 
 #[derive(Error, Debug)]
 pub enum SeaThruError {
@@ -58,7 +60,113 @@ async fn get_device_and_queue() -> Result<(Device, Queue), SeaThruError> {
     Ok((device, queue))
 }
 
-pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Result<Array2<u32>, SeaThruError> {
+fn column_depth_segmentation(
+    image_size_buffer: &Buffer,
+    parameters_buffer: &Buffer,
+    depth_buffer: &Buffer,
+    neighborhood_map_gpu_buffer: &Buffer,
+    image_width: usize,
+    _image_height: usize,
+    shader_module: &ShaderModule,
+    encoder: &mut CommandEncoder,
+    device: &Device) {
+        let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: shader_module,
+            entry_point: Some("column_depth_segmentation"),
+            compilation_options: Default::default(),
+            cache: None
+        });
+
+        let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: image_size_buffer.as_entire_binding()
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: parameters_buffer.as_entire_binding()
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: depth_buffer.as_entire_binding()
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: neighborhood_map_gpu_buffer.as_entire_binding()
+                }
+            ]
+        });
+
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None
+        });
+        cpass.set_pipeline(&compute_pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.insert_debug_marker("column_depth_segmentation");
+        cpass.dispatch_workgroups((image_width as f32 / 64f32).ceil() as u32, 1, 1);
+}
+
+fn merge_colume_depth_segmentation(
+    image_size_buffer: &Buffer,
+    parameters_buffer: &Buffer,
+    depth_buffer: &Buffer,
+    neighborhood_map_gpu_buffer: &Buffer,
+    _image_width: usize,
+    image_height: usize,
+    shader_module: &ShaderModule,
+    encoder: &mut CommandEncoder,
+    device: &Device) {
+    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: shader_module,
+        entry_point: Some("merge_colume_depth_segmentation"),
+        compilation_options: Default::default(),
+        cache: None
+    });
+
+    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: image_size_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: parameters_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: depth_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: neighborhood_map_gpu_buffer.as_entire_binding()
+            }
+        ]
+    });
+
+    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: None,
+        timestamp_writes: None
+    });
+    cpass.set_pipeline(&compute_pipeline);
+    cpass.set_bind_group(0, &bind_group, &[]);
+    cpass.insert_debug_marker("merge_colume_depth_segmentation");
+    cpass.dispatch_workgroups(1, (image_height as f32 / 64f32).ceil() as u32, 1);
+}
+
+async fn depth_segmentation_gpu(depths: &Array2<f32>, epsilon: f32) -> Result<Array2<u32>, SeaThruError> {
     let (height, width) = depths.dim();
 
     let image_size = ImageSize {
@@ -76,15 +184,6 @@ pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Re
 
     let (device, queue) = get_device_and_queue().await?;
     let shader_module = device.create_shader_module(wgpu::include_wgsl!("seathru.wgsl"));
-
-    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: None,
-            layout: None,
-            module: &shader_module,
-            entry_point: Some("estimate_neighborhood_map"),
-            compilation_options: Default::default(),
-            cache: None
-        });
 
     let image_size_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("image_size_buffer"),
@@ -115,43 +214,31 @@ pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Re
         mapped_at_creation: false
     });
 
-    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: image_size_buffer.as_entire_binding()
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: parameters_buffer.as_entire_binding()
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: depth_buffer.as_entire_binding()
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: neighborhood_map_gpu_buffer.as_entire_binding()
-            }
-        ]
-    });
-
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: None
     });
-    { // This block is necessary so that cpass goes out of scope before queue sbumit.
-        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: None,
-            timestamp_writes: None
-        });
-        cpass.set_pipeline(&compute_pipeline);
-        cpass.set_bind_group(0, &bind_group, &[]);
-        cpass.insert_debug_marker("compute neighborhood map");
-        cpass.dispatch_workgroups((width as f32 / 256f32).ceil() as u32, (height as f32 / 256f32).ceil() as u32, 1);
-    }
+
+    column_depth_segmentation(
+        &image_size_buffer,
+        &parameters_buffer,
+        &depth_buffer,
+        &neighborhood_map_gpu_buffer,
+        width,
+        height,
+        &shader_module,
+        &mut encoder,
+        &device);
+
+    merge_colume_depth_segmentation(
+        &image_size_buffer,
+        &parameters_buffer,
+        &depth_buffer,
+        &neighborhood_map_gpu_buffer,
+        width,
+        height,
+        &shader_module,
+        &mut encoder,
+        &device);
 
     let neighborhood_map_cpu_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("neighborhood_map_cpu_buffer"),
@@ -182,6 +269,19 @@ pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Re
     Err(SeaThruError::UnknownError)
 }
 
+fn cleanup_depth_segmentations(depth_segmentations: &Array2<u32>) -> Array2<u32> {
+    let range: HashSet<u32> = depth_segmentations.iter().map(|x| *x).collect();
+    let map: HashMap<u32, u32> = range.iter().enumerate().map(|(idx, x)| (*x, idx as u32)).collect();
+
+    depth_segmentations.mapv(|x| map[&x])
+}
+
+pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Result<Array2<u32>, SeaThruError> {
+    let gpu_depth_segmentations = depth_segmentation_gpu(depths, epsilon).await?;
+
+    Ok(cleanup_depth_segmentations(&gpu_depth_segmentations))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -196,7 +296,7 @@ mod tests {
         let mut npz = NpzReader::new(File::open("./data/seathru/D3/D3/depth/depthT_S04923.npz").unwrap()).unwrap();
         let depths: Array2<f32> = npz.by_name("depths").unwrap();
 
-        let neighborhood_map = estimate_neighborhood_map(&depths, 0.2).await.unwrap();
+        let neighborhood_map = estimate_neighborhood_map(&depths, 0.21).await.unwrap();
         
         let mut npz_writer = NpzWriter::new(File::create("../pySeaThruDev/neighborhood_map.npz").unwrap());
         npz_writer.add_array("neighborhood_map", &neighborhood_map).unwrap();
