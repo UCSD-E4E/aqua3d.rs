@@ -113,7 +113,7 @@ fn column_depth_segmentation(
         cpass.dispatch_workgroups((image_width as f32 / 64f32).ceil() as u32, 1, 1);
 }
 
-fn merge_colume_depth_segmentation(
+fn merge_column_depth_segmentation(
     image_size_buffer: &Buffer,
     parameters_buffer: &Buffer,
     depth_buffer: &Buffer,
@@ -127,7 +127,7 @@ fn merge_colume_depth_segmentation(
         label: None,
         layout: None,
         module: shader_module,
-        entry_point: Some("merge_colume_depth_segmentation"),
+        entry_point: Some("merge_column_depth_segmentation"),
         compilation_options: Default::default(),
         cache: None
     });
@@ -162,8 +162,61 @@ fn merge_colume_depth_segmentation(
     });
     cpass.set_pipeline(&compute_pipeline);
     cpass.set_bind_group(0, &bind_group, &[]);
-    cpass.insert_debug_marker("merge_colume_depth_segmentation");
+    cpass.insert_debug_marker("merge_column_depth_segmentation");
     cpass.dispatch_workgroups(1, (image_height as f32 / 64f32).ceil() as u32, 1);
+}
+
+fn merge_rows_depth_segmentation(
+    image_size_buffer: &Buffer,
+    parameters_buffer: &Buffer,
+    depth_buffer: &Buffer,
+    neighborhood_map_gpu_buffer: &Buffer,
+    image_width: usize,
+    _image_height: usize,
+    shader_module: &ShaderModule,
+    encoder: &mut CommandEncoder,
+    device: &Device) {
+    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: shader_module,
+        entry_point: Some("merge_rows_depth_segmentation"),
+        compilation_options: Default::default(),
+        cache: None
+    });
+
+    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: image_size_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: parameters_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: depth_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: neighborhood_map_gpu_buffer.as_entire_binding()
+            }
+        ]
+    });
+
+    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: None,
+        timestamp_writes: None
+    });
+    cpass.set_pipeline(&compute_pipeline);
+    cpass.set_bind_group(0, &bind_group, &[]);
+    cpass.insert_debug_marker("merge_rows_depth_segmentation");
+    cpass.dispatch_workgroups((image_width as f32 / 64f32).ceil() as u32, 1, 1);
 }
 
 async fn depth_segmentation_gpu(depths: &Array2<f32>, epsilon: f32) -> Result<Array2<u32>, SeaThruError> {
@@ -229,16 +282,27 @@ async fn depth_segmentation_gpu(depths: &Array2<f32>, epsilon: f32) -> Result<Ar
         &mut encoder,
         &device);
 
-    merge_colume_depth_segmentation(
-        &image_size_buffer,
-        &parameters_buffer,
-        &depth_buffer,
-        &neighborhood_map_gpu_buffer,
-        width,
-        height,
-        &shader_module,
-        &mut encoder,
-        &device);
+    // merge_column_depth_segmentation(
+    //     &image_size_buffer,
+    //     &parameters_buffer,
+    //     &depth_buffer,
+    //     &neighborhood_map_gpu_buffer,
+    //     width,
+    //     height,
+    //     &shader_module,
+    //     &mut encoder,
+    //     &device);
+
+    // merge_rows_depth_segmentation(
+    //     &image_size_buffer,
+    //     &parameters_buffer,
+    //     &depth_buffer,
+    //     &neighborhood_map_gpu_buffer,
+    //     width,
+    //     height,
+    //     &shader_module,
+    //     &mut encoder,
+    //     &device);
 
     let neighborhood_map_cpu_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("neighborhood_map_cpu_buffer"),
