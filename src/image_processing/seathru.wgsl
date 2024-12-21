@@ -79,7 +79,7 @@ fn column_depth_segmentation(
 }
 
 @compute @workgroup_size(1, 64, 1)
-fn merge_colume_depth_segmentation(
+fn merge_column_depth_segmentation(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
     const workgroup_size: i32 = 64;
@@ -87,23 +87,46 @@ fn merge_colume_depth_segmentation(
     let epsilon = estimate_neighborhood_map_parameters.epsilon;
     
     var x: i32 = 0;
-    var y: i32 = i32(global_id.y);
+    let y = global_id.y;
 
-    if (check_x_y(x, y)) {
+    if (check_x_y(x, i32(y))) {
         x = 1;
         while (x >= 0 && x < i32(image_size.width)) {
-            if (abs(get_depth_value(u32(x - 1), u32(y)) - get_depth_value(u32(x), u32(y))) <= epsilon) {
-                let neighborhood = get_neighborhood(u32(x - 1), u32(y));
-                set_neighborhood(u32(x), u32(y), neighborhood);
+            if (abs(get_depth_value(u32(x - 1), y) - get_depth_value(u32(x), y)) <= epsilon) {
+                let target_neighborhood = get_neighborhood(u32(x - 1), y);
 
-                // move up
-                // move down
+                set_neighborhood(u32(x), y, target_neighborhood);
             }
 
             x += 1;
-            y = i32(global_id.y);
         }
     }
 
     let a = neighborhood_map[0];
+}
+
+@compute @workgroup_size(64, 1, 1)
+fn merge_rows_depth_segmentation(
+    @builtin(global_invocation_id) global_id: vec3<u32>
+) {
+    const workgroup_size: i32 = 64;
+
+    let epsilon = estimate_neighborhood_map_parameters.epsilon;
+
+    let x = global_id.x;
+    var y: i32 = i32(image_size.height) - 1;
+
+    if (check_x_y(i32(x), y)) {
+        y = i32(image_size.height) - 2;
+
+        while (y >= 0 && y < i32(image_size.height)) {
+            if (abs(get_depth_value(x, u32(y + 1)) - get_depth_value(x, u32(y))) <= epsilon) {
+                let target_neighborhood = get_neighborhood(x, u32(y + 1));
+
+                set_neighborhood(x, u32(y), target_neighborhood);
+            }
+
+            y -= 1;
+        }
+    }
 }
