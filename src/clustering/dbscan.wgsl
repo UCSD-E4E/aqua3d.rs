@@ -1,7 +1,11 @@
+// Implementation of
+// https://doi.org/10.1145/3605573.3605594
+
 struct Parameters {
     count: u32,
     dim: u32,
-    epsilon: f32
+    epsilon: f32,
+    min_points: u32
 }
 
 @group(0)
@@ -17,9 +21,15 @@ var<storage, read> X: array<f32>;
 var<storage, read_write> y_pred: array<u32>;
 
 @compute @workgroup_size(1, 1, 1)
-fn dbscan() {
+fn dbscan_preprocessing() {
     let epsilon = parameters.epsilon;
     let a = X[0];
+}
 
-    y_pred[0] = u32(1);
+@compute @workgroup_size(1, 1, 1)
+fn dbscan_main() {
+    let epsilon = parameters.epsilon;
+    let a = X[0];
+    
+    y_pred[0] = u32(parameters.count);
 }
