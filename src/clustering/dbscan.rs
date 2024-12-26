@@ -44,6 +44,8 @@ async fn get_device_and_queue() -> Result<(Device, Queue), Aqua3dError> {
 fn dbscan_preprocessing(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
+    core_points_buffer: &Buffer,
+    count: u32,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
     device: &Device
@@ -69,6 +71,10 @@ fn dbscan_preprocessing(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: x_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: core_points_buffer.as_entire_binding()
             }
         ]
     });
@@ -80,12 +86,13 @@ fn dbscan_preprocessing(
     cpass.set_pipeline(&compute_pipeline);
     cpass.set_bind_group(0, &bind_group, &[]);
     cpass.insert_debug_marker("dbscan_preprocessing");
-    cpass.dispatch_workgroups(1, 1, 1);
+    cpass.dispatch_workgroups((count as f32 / 64f32).ceil() as u32, 1, 1);
 }
 
 fn dbscan_main(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
+    core_points_buffer: &Buffer,
     y_pred_buffer: &Buffer,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
@@ -115,6 +122,10 @@ fn dbscan_main(
             },
             wgpu::BindGroupEntry {
                 binding: 2,
+                resource: core_points_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
                 resource: y_pred_buffer.as_entire_binding()
             }
         ]
@@ -132,6 +143,7 @@ fn dbscan_main(
 
 pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Array1<u32>, Aqua3dError> {
     let (count, dim) = x.dim();
+    let core_points_size = (count * size_of::<u32>()) as u64;
     let y_pred_size = (count * size_of::<u32>()) as u64;
 
     let parameters = Parameters {
@@ -159,6 +171,14 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
             | wgpu::BufferUsages::COPY_DST
     });
 
+    let core_points_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("core_points_buffer"),
+        size: core_points_size,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false
+    });
+
     let y_pred_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("y_pred_buffer"),
         size: y_pred_size,
@@ -174,6 +194,8 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
     dbscan_preprocessing(
         &parameters_buffer,
         &x_buffer,
+        &core_points_buffer,
+        count as u32,
         &shader_module,
         &mut encoder,
         &device);
@@ -181,6 +203,7 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
     dbscan_main(
         &parameters_buffer,
         &x_buffer,
+        &core_points_buffer,
         &y_pred_buffer,
         &shader_module,
         &mut encoder,
