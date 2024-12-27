@@ -94,6 +94,7 @@ fn dbscan_main(
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,
     y_pred_buffer: &Buffer,
+    count: u32,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
     device: &Device
@@ -131,6 +132,8 @@ fn dbscan_main(
         ]
     });
 
+    let workgroup_count = (count as f32 / 64f32).ceil() as u32;
+
     let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: None,
         timestamp_writes: None
@@ -138,7 +141,10 @@ fn dbscan_main(
     cpass.set_pipeline(&compute_pipeline);
     cpass.set_bind_group(0, &bind_group, &[]);
     cpass.insert_debug_marker("dbscan_main");
-    cpass.dispatch_workgroups(1, 1, 1);
+    cpass.dispatch_workgroups(
+        workgroup_count, 
+        workgroup_count, 
+        1);
 }
 
 pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Array1<u32>, Aqua3dError> {
@@ -205,6 +211,7 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
         &x_buffer,
         &core_points_buffer,
         &y_pred_buffer,
+        count as u32,
         &shader_module,
         &mut encoder,
         &device);
