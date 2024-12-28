@@ -93,7 +93,6 @@ fn dbscan_main(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,
-    y_pred_buffer: &Buffer,
     count: u32,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
@@ -124,10 +123,6 @@ fn dbscan_main(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: core_points_buffer.as_entire_binding()
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: y_pred_buffer.as_entire_binding()
             }
         ]
     });
@@ -145,6 +140,43 @@ fn dbscan_main(
         workgroup_count, 
         workgroup_count, 
         1);
+}
+
+fn dbscan_postprocessing(
+    y_pred_buffer: &Buffer,
+    shader_module: &ShaderModule,
+    encoder: &mut CommandEncoder,
+    device: &Device
+) {
+    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &shader_module,
+        entry_point: Some("dbscan_postprocessing"),
+        compilation_options: Default::default(),
+        cache: None
+    });
+
+    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: y_pred_buffer.as_entire_binding()
+            }
+        ]
+    });
+
+    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: None,
+        timestamp_writes: None
+    });
+    cpass.set_pipeline(&compute_pipeline);
+    cpass.set_bind_group(0, &bind_group, &[]);
+    cpass.insert_debug_marker("dbscan_main");
+    cpass.dispatch_workgroups(1, 1, 1);
 }
 
 pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Array1<u32>, Aqua3dError> {
@@ -210,11 +242,17 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
         &parameters_buffer,
         &x_buffer,
         &core_points_buffer,
-        &y_pred_buffer,
         count as u32,
         &shader_module,
         &mut encoder,
         &device);
+
+    dbscan_postprocessing(
+        &y_pred_buffer,
+        &shader_module,
+        &mut encoder,
+        &device
+    );
 
     let y_pred_cpu_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("y_pred_cpu_buffer"),

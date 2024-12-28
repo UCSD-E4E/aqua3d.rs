@@ -21,7 +21,7 @@ var<storage, read> X: array<f32>;
 var<storage, read_write> core_points: array<u32>;
 
 @group(0)
-@binding(3)
+@binding(4)
 var<storage, read_write> y_pred: array<u32>;
 
 fn calculate_distance(x_idx: u32, y_idx: u32) -> f32 {
@@ -103,12 +103,10 @@ fn dbscan_main(
                 // mark y as member of cluster - TODO
                 union_trees(global_id.x, global_id.y);
             }
-
-            y_pred[0] = u32(parameters.count); // TODO remove
     }
 }
 
 @compute @workgroup_size(1, 1, 1)
 fn dbscan_postprocessing() {
-    // TODO
+    y_pred[0] = u32(1);
 }
