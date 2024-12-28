@@ -21,6 +21,10 @@ var<storage, read> X: array<f32>;
 var<storage, read_write> core_points: array<u32>;
 
 @group(0)
+@binding(3)
+var<storage, read_write> tree: array<u32>;
+
+@group(0)
 @binding(4)
 var<storage, read_write> y_pred: array<u32>;
 
@@ -45,11 +49,32 @@ fn is_core_point(idx: u32) -> bool {
 }
 
 fn union_trees(x_idx: u32, y_idx: u32) {
-    // TODO
+    let x_root = find_root(x_idx);
+    let y_root = find_root(y_idx);
+
+    if (x_root != y_root) {
+        tree[y_root] = x_root;
+    }
+}
+
+fn find_root(x_idx: u32) -> u32 {
+    var idx = x_idx;
+
+    var counter = 0;
+    while (tree[idx] != idx) {
+        idx = tree[idx];
+
+        counter += 1;
+        if (counter >= 10) {
+            break;
+        }
+    }
+
+    return idx;
 }
 
 fn is_member_of_any_cluster(x_idx: u32) -> bool {
-    return false; // TODO
+    return tree[x_idx] != x_idx;
 }
 
 @compute @workgroup_size(64, 1, 1)
@@ -82,6 +107,8 @@ fn dbscan_preprocessing(
         else {
             core_points[global_id.x] = u32(0);
         }
+
+        tree[global_id.x] = global_id.x; // Initialize the tree.
     }
 }
 
@@ -95,18 +122,15 @@ fn dbscan_main(
         is_core_point(global_id.x) &&
         calculate_distance(global_id.x, global_id.y) < parameters.epsilon) {
 
-            if (is_core_point(global_id.y)) {
-                union_trees(global_id.x, global_id.y);
-            }
-            else if (!is_member_of_any_cluster(global_id.y)) {
-                // Critical section
-                // mark y as member of cluster - TODO
+            if (is_core_point(global_id.y) || !is_member_of_any_cluster(global_id.y)) {
                 union_trees(global_id.x, global_id.y);
             }
     }
 }
 
-@compute @workgroup_size(1, 1, 1)
-fn dbscan_postprocessing() {
-    y_pred[0] = u32(1);
+@compute @workgroup_size(64, 1, 1)
+fn dbscan_postprocessing(
+    @builtin(global_invocation_id) global_id: vec3<u32>
+) {
+    y_pred[global_id.x] = tree[global_id.x];
 }

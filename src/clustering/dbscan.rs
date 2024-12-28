@@ -45,6 +45,7 @@ fn dbscan_preprocessing(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,
+    tree_buffer: &Buffer,
     count: u32,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
@@ -75,6 +76,10 @@ fn dbscan_preprocessing(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: core_points_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: tree_buffer.as_entire_binding()
             }
         ]
     });
@@ -93,6 +98,7 @@ fn dbscan_main(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,
+    tree_buffer: &Buffer,
     count: u32,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
@@ -123,6 +129,10 @@ fn dbscan_main(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: core_points_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: tree_buffer.as_entire_binding()
             }
         ]
     });
@@ -143,7 +153,9 @@ fn dbscan_main(
 }
 
 fn dbscan_postprocessing(
+    tree_buffer: &Buffer,
     y_pred_buffer: &Buffer,
+    count: u32,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
     device: &Device
@@ -163,6 +175,10 @@ fn dbscan_postprocessing(
         layout: &bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
+                binding: 3,
+                resource: tree_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
                 binding: 4,
                 resource: y_pred_buffer.as_entire_binding()
             }
@@ -176,7 +192,7 @@ fn dbscan_postprocessing(
     cpass.set_pipeline(&compute_pipeline);
     cpass.set_bind_group(0, &bind_group, &[]);
     cpass.insert_debug_marker("dbscan_main");
-    cpass.dispatch_workgroups(1, 1, 1);
+    cpass.dispatch_workgroups((count as f32 / 64f32).ceil() as u32, 1, 1);
 }
 
 pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Array1<u32>, Aqua3dError> {
@@ -217,6 +233,14 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
         mapped_at_creation: false
     });
 
+    let tree_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("tree_buffer"),
+        size: core_points_size,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false
+    });
+
     let y_pred_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("y_pred_buffer"),
         size: y_pred_size,
@@ -233,6 +257,7 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
         &parameters_buffer,
         &x_buffer,
         &core_points_buffer,
+        &tree_buffer,
         count as u32,
         &shader_module,
         &mut encoder,
@@ -242,13 +267,16 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
         &parameters_buffer,
         &x_buffer,
         &core_points_buffer,
+        &tree_buffer,
         count as u32,
         &shader_module,
         &mut encoder,
         &device);
 
     dbscan_postprocessing(
+        &tree_buffer,
         &y_pred_buffer,
+        count as u32,
         &shader_module,
         &mut encoder,
         &device
@@ -294,7 +322,7 @@ mod tests {
     #[tokio::test]
     async fn dbscan_test() {
         let epsilon = 0.3f32;
-        let min_points: u32 = 2;
+        let min_points: u32 = 5;
 
         let mut npz = NpzReader::new(File::open(format!("./data/clusters/2D/{}.npz", "noisy_circles")).unwrap()).unwrap();
         let x: Array2<f64> = npz.by_name("X").unwrap();
@@ -304,7 +332,10 @@ mod tests {
 
         let y_pred = dbscan(&x_f32, epsilon, min_points).await.unwrap();
 
-        println!("{}", y_pred[0]);
+        let (count, _dim) = x.dim();
+        for i in 0..count {
+            println!("{}", y_pred[i]);
+        }
 
         //assert_eq!(y_pred == truth_u32, true);
     }
