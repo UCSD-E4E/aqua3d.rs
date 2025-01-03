@@ -2,37 +2,31 @@
 // https://doi.org/10.1145/3605573.3605594
 
 struct Parameters {
-    count: u32,
-    dim: u32,
-    epsilon: f32,
-    min_points: u32
+    uint count;
+    uint dim;
+    float epsilon;
+    uint min_points;
 }
 
-@group(0)
-@binding(0)
-var<storage, read> parameters: Parameters;
+[vk::binding(0, 0)]
+ParameterBlock<Parameters> parameters;
 
-@group(0)
-@binding(1)
-var<storage, read> X: array<f32>;
+[vk::binding(1, 0)]
+StructuredBuffer<float> X;
 
-@group(0)
-@binding(2)
-var<storage, read_write> core_points: array<u32>;
+[vk::binding(2, 0)]
+RWStructuredBuffer<uint> core_points;
 
-@group(0)
-@binding(3)
-var<storage, read_write> tree: array<u32>;
+[vk::binding(3, 0)]
+RWStructuredBuffer<uint> tree;
 
-@group(0)
-@binding(4)
-var<storage, read_write> y_pred: array<u32>;
+[vk::binding(4, 0)]
+RWStructuredBuffer<uint> y_pred: array<u32>;
 
-fn calculate_distance(x_idx: u32, y_idx: u32) -> f32 {
-    var sum: f32 = 0;
+float calculate_distance(uint x_idx, uint y_idx) {
+    float sum = 0;
 
-    var i: u32;
-    for (i = u32(0); i < parameters.dim; i += u32(1)) {
+    for (uint i = 0; i < parameters.dim; i += 1) {
         let idx1 = x_idx * parameters.dim + i;
         let idx2 = y_idx * parameters.dim + i;
 
@@ -44,11 +38,11 @@ fn calculate_distance(x_idx: u32, y_idx: u32) -> f32 {
     return sqrt(sum);
 }
 
-fn is_core_point(idx: u32) -> bool {
+bool is_core_point(uint idx) {
     return core_points[idx] != 0;
 }
 
-fn union_trees(x_idx: u32, y_idx: u32) {
+void union_trees(uint x_idx, uint y_idx) {
     let x_root = find_root(x_idx);
     let y_root = find_root(y_idx);
 
@@ -57,7 +51,7 @@ fn union_trees(x_idx: u32, y_idx: u32) {
     }
 }
 
-fn find_root(x_idx: u32) -> u32 {
+uint find_root(uint x_idx) {
     var idx = x_idx;
 
     var counter = 0;
@@ -73,25 +67,25 @@ fn find_root(x_idx: u32) -> u32 {
     return idx;
 }
 
-fn is_member_of_any_cluster(x_idx: u32) -> bool {
+bool is_member_of_any_cluster(uint x_idx) {
     return tree[x_idx] != x_idx;
 }
 
-@compute @workgroup_size(64, 1, 1)
-fn dbscan_preprocessing(
-    @builtin(global_invocation_id) global_id: vec3<u32>
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void dbscan_preprocessing(
+    uint3 global_id : SV_DispatchThreadID
 ) {
     if (global_id.x < parameters.count) {
-        var neighbor_count: u32 = 0;
+        uint neighbor_count = 0;
 
         if (parameters.min_points > 2 ) {
-            var i: u32;
-            for (i = u32(0); i < parameters.count; i += u32(1)) {
+            for (uint i = 0; i < parameters.count; i += 1) {
                 if (i != global_id.x && neighbor_count < parameters.min_points) {
                     let dist = calculate_distance(global_id.x, i);
 
                     if (dist <= parameters.epsilon) {
-                        neighbor_count += u32(1);
+                        neighbor_count += 1;
                     }
                 }
             }
@@ -105,16 +99,17 @@ fn dbscan_preprocessing(
             core_points[global_id.x] = neighbor_count;
         }
         else {
-            core_points[global_id.x] = u32(0);
+            core_points[global_id.x] = 0;
         }
 
         tree[global_id.x] = global_id.x; // Initialize the tree.
     }
 }
 
-@compute @workgroup_size(16, 16, 1)
-fn dbscan_main(
-    @builtin(global_invocation_id) global_id: vec3<u32>
+[shader("compute")]
+[numthreads(16, 16, 1)]
+void dbscan_main(
+    uint3 global_id : SV_DispatchThreadID
 ) {
     if (global_id.x < parameters.count &&
         global_id.y < parameters.count && 
@@ -128,9 +123,10 @@ fn dbscan_main(
     }
 }
 
-@compute @workgroup_size(64, 1, 1)
-fn dbscan_postprocessing(
-    @builtin(global_invocation_id) global_id: vec3<u32>
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void dbscan_postprocessing(
+    uint3 global_id : SV_DispatchThreadID
 ) {
     y_pred[global_id.x] = tree[global_id.x];
 }

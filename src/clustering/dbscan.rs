@@ -209,13 +209,14 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
     let parameters_bytes = bytemuck::bytes_of(&parameters);
 
     let (device, queue) = get_device_and_queue().await?;
-    let shader_module = device.create_shader_module(wgpu::include_wgsl!("dbscan.wgsl"));
+    let shader_module = device.create_shader_module(wgpu::include_spirv!("dbscan.spv"));
 
     let parameters_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("parameters_buffer"),
         contents: parameters_bytes,
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::UNIFORM
     });
 
     let x_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
