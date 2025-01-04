@@ -1,3 +1,3 @@
 mod dbscan;
 
-pub use dbscan::dbscan;
+pub use dbscan::{dbscan, DbScanParameters};

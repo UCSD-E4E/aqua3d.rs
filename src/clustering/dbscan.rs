@@ -1,44 +1,17 @@
 use anyhow::Context;
 use bytemuck::{Pod, Zeroable};
 use ndarray::{Array1, Array2};
-use wgpu::{util::DeviceExt, Buffer, CommandEncoder, Device, Queue, ShaderModule};
+use wgpu::{util::DeviceExt, Buffer, CommandEncoder, Device, ShaderModule};
 
-use crate::errors::Aqua3dError;
+use crate::{errors::Aqua3dError, gpu::get_device_and_queue};
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
-struct Parameters {
+pub struct DbScanParameters {
     pub count: u32,
     pub dim: u32,
     pub epsilon: f32,
     pub min_points: u32
-}
-
-async fn get_device_and_queue() -> Result<(Device, Queue), Aqua3dError> {
-    let instance = wgpu::Instance::default();
-
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions::default())
-        .await;
-
-    let adapter = match adapter {
-        Some(adapter) => Ok(adapter),
-        None => Err(Aqua3dError::CannotAcquireGpu)
-    }?;
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-                memory_hints: wgpu::MemoryHints::MemoryUsage
-            },
-            None
-        )
-        .await?;
-
-    Ok((device, queue))
 }
 
 fn dbscan_preprocessing(
@@ -157,7 +130,7 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
     let core_points_size = (count * size_of::<u32>()) as u64;
     let y_pred_size = (count * size_of::<u32>()) as u64;
 
-    let parameters = Parameters {
+    let parameters = DbScanParameters {
         count: count as u32,
         dim: dim as u32,
         epsilon,

@@ -14,7 +14,7 @@ var<storage, read> parameters: Parameters;
 
 @group(0)
 @binding(1)
-var<storage, read> X: array<f32>;
+var<storage, read_write> X: array<f32>;
 
 @group(0)
 @binding(2)
@@ -24,15 +24,18 @@ var<storage, read_write> core_points: array<u32>;
 @binding(3)
 var<storage, read_write> y_pred: array<atomic<u32>>;
 
+fn get_X_value(idx: u32, dim: u32) -> f32 { 
+    let target_idx = idx * parameters.dim + dim;
+
+    return X[target_idx];
+}
+
 fn calculate_distance(x_idx: u32, y_idx: u32) -> f32 {
     var sum: f32 = 0;
 
     var i: u32;
     for (i = u32(0); i < parameters.dim; i += u32(1)) {
-        let idx1 = x_idx * parameters.dim + i;
-        let idx2 = y_idx * parameters.dim + i;
-
-        let diff = X[idx1] - X[idx2];
+        let diff = get_X_value(x_idx, i) - get_X_value(y_idx, i);
 
         sum += (diff * diff);
     }
