@@ -22,11 +22,7 @@ var<storage, read_write> core_points: array<u32>;
 
 @group(0)
 @binding(3)
-var<storage, read_write> tree: array<atomic<u32>>;
-
-@group(0)
-@binding(4)
-var<storage, read_write> y_pred: array<u32>;
+var<storage, read_write> y_pred: array<atomic<u32>>;
 
 fn calculate_distance(x_idx: u32, y_idx: u32) -> f32 {
     var sum: f32 = 0;
@@ -61,14 +57,14 @@ fn union_trees(x_idx: u32, y_idx: u32) {
             if (x_root != y_root) {
                 var ret: u32;
                 if (x_root < y_root) {
-                    ret = atomicCompareExchangeWeak(&tree[y_root], y_root, x_root).old_value;
+                    ret = atomicCompareExchangeWeak(&y_pred[y_root], y_root, x_root).old_value;
                     if (ret != y_root) {
                         y_root = ret;
                         repeat = true;
                     }
                 }
                 else {
-                    ret = atomicCompareExchangeWeak(&tree[x_root], x_root, y_root).old_value;
+                    ret = atomicCompareExchangeWeak(&y_pred[x_root], x_root, y_root).old_value;
                     if (ret != x_root) {
                         x_root = ret;
                         repeat = true;
@@ -84,14 +80,14 @@ fn union_trees(x_idx: u32, y_idx: u32) {
 }
 
 fn find_root(idx: u32) -> u32 {
-    var curr = tree[idx];
+    var curr = y_pred[idx];
     if (curr != idx) {
         var next = idx;
         var prev = idx;
         
-        while (curr > tree[curr]) {
-            next = tree[curr];
-            tree[prev] = next;
+        while (curr > y_pred[curr]) {
+            next = y_pred[curr];
+            y_pred[prev] = next;
             prev = curr;
             curr = next;
         }
@@ -100,7 +96,7 @@ fn find_root(idx: u32) -> u32 {
 }
 
 fn is_member_of_any_cluster(x_idx: u32) -> bool {
-    return tree[x_idx] != x_idx;
+    return y_pred[x_idx] != x_idx;
 }
 
 @compute @workgroup_size(64, 1, 1)
@@ -134,7 +130,7 @@ fn dbscan_preprocessing(
             core_points[global_id.x] = u32(0);
         }
 
-        tree[global_id.x] = global_id.x; // Initialize the tree.
+        y_pred[global_id.x] = global_id.x; // Initialize the y_pred.
     }
 }
 
@@ -152,11 +148,4 @@ fn dbscan_main(
                 union_trees(global_id.x, global_id.y);
             }
     }
-}
-
-@compute @workgroup_size(64, 1, 1)
-fn dbscan_postprocessing(
-    @builtin(global_invocation_id) global_id: vec3<u32>
-) {
-    y_pred[global_id.x] = tree[global_id.x];
 }

@@ -45,7 +45,7 @@ fn dbscan_preprocessing(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,
-    tree_buffer: &Buffer,
+    y_pred_buffer: &Buffer,
     count: u32,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
@@ -79,7 +79,7 @@ fn dbscan_preprocessing(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: tree_buffer.as_entire_binding()
+                resource: y_pred_buffer.as_entire_binding()
             }
         ]
     });
@@ -98,7 +98,7 @@ fn dbscan_main(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,
-    tree_buffer: &Buffer,
+    y_pred_buffer: &Buffer,
     count: u32,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
@@ -132,7 +132,7 @@ fn dbscan_main(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: tree_buffer.as_entire_binding()
+                resource: y_pred_buffer.as_entire_binding()
             }
         ]
     });
@@ -150,49 +150,6 @@ fn dbscan_main(
         workgroup_count, 
         workgroup_count, 
         1);
-}
-
-fn dbscan_postprocessing(
-    tree_buffer: &Buffer,
-    y_pred_buffer: &Buffer,
-    count: u32,
-    shader_module: &ShaderModule,
-    encoder: &mut CommandEncoder,
-    device: &Device
-) {
-    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None,
-        layout: None,
-        module: &shader_module,
-        entry_point: Some("dbscan_postprocessing"),
-        compilation_options: Default::default(),
-        cache: None
-    });
-
-    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: tree_buffer.as_entire_binding()
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: y_pred_buffer.as_entire_binding()
-            }
-        ]
-    });
-
-    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-        label: None,
-        timestamp_writes: None
-    });
-    cpass.set_pipeline(&compute_pipeline);
-    cpass.set_bind_group(0, &bind_group, &[]);
-    cpass.insert_debug_marker("dbscan_main");
-    cpass.dispatch_workgroups((count as f32 / 64f32).ceil() as u32, 1, 1);
 }
 
 pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Array1<u32>, Aqua3dError> {
@@ -234,14 +191,6 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
         mapped_at_creation: false
     });
 
-    let tree_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("tree_buffer"),
-        size: core_points_size,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false
-    });
-
     let y_pred_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("y_pred_buffer"),
         size: y_pred_size,
@@ -258,7 +207,7 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
         &parameters_buffer,
         &x_buffer,
         &core_points_buffer,
-        &tree_buffer,
+        &y_pred_buffer,
         count as u32,
         &shader_module,
         &mut encoder,
@@ -268,20 +217,11 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
         &parameters_buffer,
         &x_buffer,
         &core_points_buffer,
-        &tree_buffer,
-        count as u32,
-        &shader_module,
-        &mut encoder,
-        &device);
-
-    dbscan_postprocessing(
-        &tree_buffer,
         &y_pred_buffer,
         count as u32,
         &shader_module,
         &mut encoder,
-        &device
-    );
+        &device);
 
     let y_pred_cpu_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("y_pred_cpu_buffer"),
@@ -325,7 +265,7 @@ mod tests {
         let epsilon = 0.3f32;
         let min_points: u32 = 5;
 
-        let mut npz = NpzReader::new(File::open(format!("./data/clusters/2D/{}.npz", "noisy_moons")).unwrap()).unwrap();
+        let mut npz = NpzReader::new(File::open(format!("./data/clusters/2D/{}.npz", "noisy_circles")).unwrap()).unwrap();
         let x: Array2<f64> = npz.by_name("X").unwrap();
         let x_f32 = x.mapv(|x| x as f32);
         // let truth: Array1<i64> = npz.by_name("dbscan").unwrap();
