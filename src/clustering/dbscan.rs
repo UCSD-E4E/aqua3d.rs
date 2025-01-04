@@ -219,7 +219,7 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
         return Ok(Array1::from_shape_vec((count,), y_pred_array)?);
     }
 
-    Err(Aqua3dError::UnknownError)?
+    Err(Aqua3dError::UnknownError)
 }
 
 #[cfg(test)]

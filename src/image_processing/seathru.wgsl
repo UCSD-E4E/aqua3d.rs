@@ -205,9 +205,13 @@ fn seathru_estimate_neighborhoodmap_preprocessing(
     }
 }
 
-// fn seathru_estimate_neighborhoodmap_postprocessing() {
+@compute @workgroup_size(16, 16, 1)
+fn seathru_estimate_neighborhoodmap_postprocessing(
+    @builtin(global_invocation_id) global_id: vec3<u32>
+) {
+    if (global_id.x < neighborhoodmap_parameters.width && global_id.y < neighborhoodmap_parameters.height) {
+        let idx = global_id.y * neighborhoodmap_parameters.width + global_id.x;
 
-// }
-
-// Call DBScan Methods
-// Post process back into image
+        set_neighborhood_value(global_id.x, global_id.y, y_pred[idx]);
+    }
+}
