@@ -43,11 +43,33 @@ bool is_core_point(uint idx) {
 }
 
 void union_trees(uint x_idx, uint y_idx) {
-    let x_root = find_root(x_idx);
-    let y_root = find_root(y_idx);
+    var x_root = find_root(x_idx);
+    
+    if (x_idx > y_idx) {
+        var y_root = find_root(y_idx);
+        bool repeat = false;
 
-    if (x_root != y_root) {
-        tree[y_root] = x_root;
+        do {
+            repeat = false;
+
+            if (x_root != y_root) {
+                uint ret;
+                if (x_root < y_root) {
+                    InterlockedCompareExchange(tree[y_root], y_root, x_root, ret);
+                    if (ret != y_root) {
+                        y_root = ret;
+                        repeat = true;
+                    }
+                }
+                else {
+                    InterlockedCompareExchange(tree[x_root], x_root, y_root, ret);
+                    if (ret != x_root) {
+                        x_root = ret;
+                        repeat = true;
+                    }
+                }
+            }
+        } while (repeat);
     }
 }
 
