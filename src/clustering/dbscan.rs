@@ -209,7 +209,7 @@ pub async fn dbscan(x: &Array2<f32>, epsilon: f32, min_points: u32) -> Result<Ar
     let parameters_bytes = bytemuck::bytes_of(&parameters);
 
     let (device, queue) = get_device_and_queue().await?;
-    let shader_module = device.create_shader_module(wgpu::include_spirv!("dbscan.spv"));
+    let shader_module = device.create_shader_module(wgpu::include_wgsl!("dbscan.wgsl"));
 
     let parameters_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("parameters_buffer"),
@@ -325,7 +325,7 @@ mod tests {
         let epsilon = 0.3f32;
         let min_points: u32 = 5;
 
-        let mut npz = NpzReader::new(File::open(format!("./data/clusters/2D/{}.npz", "noisy_circles")).unwrap()).unwrap();
+        let mut npz = NpzReader::new(File::open(format!("./data/clusters/2D/{}.npz", "noisy_moons")).unwrap()).unwrap();
         let x: Array2<f64> = npz.by_name("X").unwrap();
         let x_f32 = x.mapv(|x| x as f32);
         // let truth: Array1<i64> = npz.by_name("dbscan").unwrap();

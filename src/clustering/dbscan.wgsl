@@ -2,31 +2,37 @@
 // https://doi.org/10.1145/3605573.3605594
 
 struct Parameters {
-    uint count;
-    uint dim;
-    float epsilon;
-    uint min_points;
+    count: u32,
+    dim: u32,
+    epsilon: f32,
+    min_points: u32
 }
 
-[vk::binding(0, 0)]
-ParameterBlock<Parameters> parameters;
+@group(0)
+@binding(0)
+var<storage, read> parameters: Parameters;
 
-[vk::binding(1, 0)]
-StructuredBuffer<float> X;
+@group(0)
+@binding(1)
+var<storage, read> X: array<f32>;
 
-[vk::binding(2, 0)]
-RWStructuredBuffer<uint> core_points;
+@group(0)
+@binding(2)
+var<storage, read_write> core_points: array<u32>;
 
-[vk::binding(3, 0)]
-RWStructuredBuffer<uint> tree;
+@group(0)
+@binding(3)
+var<storage, read_write> tree: array<atomic<u32>>;
 
-[vk::binding(4, 0)]
-RWStructuredBuffer<uint> y_pred: array<u32>;
+@group(0)
+@binding(4)
+var<storage, read_write> y_pred: array<u32>;
 
-float calculate_distance(uint x_idx, uint y_idx) {
-    float sum = 0;
+fn calculate_distance(x_idx: u32, y_idx: u32) -> f32 {
+    var sum: f32 = 0;
 
-    for (uint i = 0; i < parameters.dim; i += 1) {
+    var i: u32;
+    for (i = u32(0); i < parameters.dim; i += u32(1)) {
         let idx1 = x_idx * parameters.dim + i;
         let idx2 = y_idx * parameters.dim + i;
 
@@ -38,76 +44,80 @@ float calculate_distance(uint x_idx, uint y_idx) {
     return sqrt(sum);
 }
 
-bool is_core_point(uint idx) {
+fn is_core_point(idx: u32) -> bool {
     return core_points[idx] != 0;
 }
 
-void union_trees(uint x_idx, uint y_idx) {
+fn union_trees(x_idx: u32, y_idx: u32) {
     var x_root = find_root(x_idx);
     
     if (x_idx > y_idx) {
         var y_root = find_root(y_idx);
-        bool repeat = false;
+        var repeat = false;
 
-        do {
+        loop {
             repeat = false;
 
             if (x_root != y_root) {
-                uint ret;
+                var ret: u32;
                 if (x_root < y_root) {
-                    InterlockedCompareExchange(tree[y_root], y_root, x_root, ret);
+                    ret = atomicCompareExchangeWeak(&tree[y_root], y_root, x_root).old_value;
                     if (ret != y_root) {
                         y_root = ret;
                         repeat = true;
                     }
                 }
                 else {
-                    InterlockedCompareExchange(tree[x_root], x_root, y_root, ret);
+                    ret = atomicCompareExchangeWeak(&tree[x_root], x_root, y_root).old_value;
                     if (ret != x_root) {
                         x_root = ret;
                         repeat = true;
                     }
                 }
             }
-        } while (repeat);
+
+            if (!repeat) {
+                break;
+            }
+        }
     }
 }
 
-[ForceInline]
-uint find_root(const uint idx)
-{
-  int curr = tree[idx];
-  if (curr != idx) {
-    
-    int next, prev = idx;
-    while (curr > (next = tree[curr])) {
-      tree[prev] = next;
-      prev = curr;
-      curr = next;
+fn find_root(idx: u32) -> u32 {
+    var curr = tree[idx];
+    if (curr != idx) {
+        var next = idx;
+        var prev = idx;
+        
+        while (curr > tree[curr]) {
+            next = tree[curr];
+            tree[prev] = next;
+            prev = curr;
+            curr = next;
+        }
     }
-  }
-  return curr;
+    return curr;
 }
 
-bool is_member_of_any_cluster(uint x_idx) {
+fn is_member_of_any_cluster(x_idx: u32) -> bool {
     return tree[x_idx] != x_idx;
 }
 
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void dbscan_preprocessing(
-    uint3 global_id : SV_DispatchThreadID
+@compute @workgroup_size(64, 1, 1)
+fn dbscan_preprocessing(
+    @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
     if (global_id.x < parameters.count) {
-        uint neighbor_count = 0;
+        var neighbor_count: u32 = 0;
 
         if (parameters.min_points > 2 ) {
-            for (uint i = 0; i < parameters.count; i += 1) {
+            var i: u32;
+            for (i = u32(0); i < parameters.count; i += u32(1)) {
                 if (i != global_id.x && neighbor_count < parameters.min_points) {
                     let dist = calculate_distance(global_id.x, i);
 
                     if (dist <= parameters.epsilon) {
-                        neighbor_count += 1;
+                        neighbor_count += u32(1);
                     }
                 }
             }
@@ -121,33 +131,32 @@ void dbscan_preprocessing(
             core_points[global_id.x] = neighbor_count;
         }
         else {
-            core_points[global_id.x] = 0;
+            core_points[global_id.x] = u32(0);
         }
 
         tree[global_id.x] = global_id.x; // Initialize the tree.
     }
 }
 
-[shader("compute")]
-[numthreads(16, 16, 1)]
-void dbscan_main(
-    uint3 global_id : SV_DispatchThreadID
+@compute @workgroup_size(16, 16, 1)
+fn dbscan_main(
+    @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
     if (global_id.x < parameters.count &&
         global_id.y < parameters.count && 
         global_id.x != global_id.y &&
         is_core_point(global_id.x) &&
         calculate_distance(global_id.x, global_id.y) < parameters.epsilon) {
+
             if (is_core_point(global_id.y) || !is_member_of_any_cluster(global_id.y)) {
                 union_trees(global_id.x, global_id.y);
             }
     }
 }
 
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void dbscan_postprocessing(
-    uint3 global_id : SV_DispatchThreadID
+@compute @workgroup_size(64, 1, 1)
+fn dbscan_postprocessing(
+    @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
     y_pred[global_id.x] = tree[global_id.x];
 }
