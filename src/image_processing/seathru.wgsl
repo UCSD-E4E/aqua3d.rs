@@ -2,13 +2,6 @@
 // Implementation of
 // https://doi.org/10.1145/3605573.3605594
 
-struct Parameters {
-    count: u32,
-    dim: u32,
-    epsilon: f32,
-    min_points: u32
-}
-
 @group(0)
 @binding(0)
 var<storage, read> parameters: Parameters;
@@ -125,25 +118,6 @@ fn dbscan_preprocessing(
     }
 }
 
-@compute @workgroup_size(64, 1, 1)
-fn dbscan_main(
-    @builtin(global_invocation_id) global_id: vec3<u32>
-) {
-    var y: u32;
-    for (y = u32(0); y < parameters.count; y += u32(1)) {
-        if (global_id.x < parameters.count &&
-            global_id.x != global_id.y &&
-            is_core_point(global_id.x) &&
-            calculate_distance(global_id.x, y) < parameters.epsilon) {
-
-                if (is_core_point(y) || !is_member_of_any_cluster(y)) {
-                    union_trees(global_id.x, y);
-                }
-        }
-    }
-}
-
-
 // =============================== End Copied from DBScan - DO NOT EDIT ========================================
 
 fn calculate_distance(x_idx: u32, y_idx: u32) -> f32 {
@@ -159,25 +133,25 @@ fn calculate_distance(x_idx: u32, y_idx: u32) -> f32 {
     return sqrt(diff * diff);
 }
 
-struct NeighborhoodmapParameters {
+struct Parameters {
+    count: u32,
+    dim: u32,
+    epsilon: f32,
+    min_points: u32,
     height: u32,
     width: u32
 }
 
 @group(0)
 @binding(4)
-var<storage, read> neighborhoodmap_parameters: NeighborhoodmapParameters;
-
-@group(0)
-@binding(5)
 var<storage, read> depth_map: array<f32>;
 
 @group(0)
-@binding(6)
+@binding(5)
 var<storage, read_write> neighborhood_map: array<u32>;
 
 fn get_depth_value(x: u32, y: u32) -> f32 {
-    let idx = y * neighborhoodmap_parameters.width + x;
+    let idx = y * parameters.width + x;
 
     return depth_map[idx];
 }
@@ -188,16 +162,85 @@ fn set_X_value(idx: u32, dim: u32, value: f32) {
 }
 
 fn set_neighborhood_value(x: u32, y: u32, value: u32) {
-    let idx = y * neighborhoodmap_parameters.width + x;
+    let idx = y * parameters.width + x;
     neighborhood_map[idx] = value;
+}
+
+fn get_neighbor_point(x: u32, direction: u32) -> u32 {
+    var depth_pos: vec2<u32>;
+    depth_pos.x = u32(get_X_value(x, u32(0)));
+    depth_pos.y = u32(get_X_value(x, u32(1)));
+
+    var neighbor_pos: vec2<u32>;
+    switch direction {
+        case 0u: { // North
+            if depth_pos.y == 0 { // We can't go north
+                neighbor_pos.x = parameters.count;
+                neighbor_pos.y = parameters.count;
+            }
+            else {
+                neighbor_pos.x = depth_pos.x;
+                neighbor_pos.y = depth_pos.y - 1;
+            }
+        }
+        case 1u: { // East
+            if depth_pos.x == parameters.width - 1 { // We can't go east
+                neighbor_pos.x = parameters.count;
+                neighbor_pos.y = parameters.count;
+            }
+            else {
+                neighbor_pos.x = depth_pos.x + 1;
+                neighbor_pos.y = depth_pos.y;
+            }
+        }
+        case 2u: { // South
+            if depth_pos.y == parameters.height - 1 { // We can't go south
+                neighbor_pos.x = parameters.count;
+                neighbor_pos.y = parameters.count + 1;
+            }
+            else {
+                neighbor_pos.x = depth_pos.x;
+                neighbor_pos.y = depth_pos.y - 1;
+            }
+        }
+        case 3u: { // West
+            if depth_pos.x == 0 { // We can't go west
+                neighbor_pos.x = parameters.count;
+                neighbor_pos.y = parameters.count;
+            }
+            else {
+                neighbor_pos.x = depth_pos.x - x;
+                neighbor_pos.y = depth_pos.y;
+            }
+        }
+        default: {
+            // Choosing these values because they are WAY out of the range we are processing.
+            neighbor_pos.x = parameters.count;
+            neighbor_pos.y = parameters.count;
+        }
+    }
+
+    var i: u32;
+    for (i = u32(0); i < parameters.count; i++) {
+        var depth_pos: vec2<u32>;
+        depth_pos.x = u32(get_X_value(x, u32(0)));
+        depth_pos.y = u32(get_X_value(x, u32(1)));
+
+        if neighbor_pos.x == depth_pos.x && 
+            neighbor_pos.y == depth_pos.y {
+            return i;
+        }
+    }
+
+    return parameters.count; // This value is out of range.
 }
 
 @compute @workgroup_size(16, 16, 1)
 fn seathru_estimate_neighborhoodmap_preprocessing(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
-    if (global_id.x < neighborhoodmap_parameters.width && global_id.y < neighborhoodmap_parameters.height) {
-        let X_idx = global_id.y * neighborhoodmap_parameters.width + global_id.x;
+    if (global_id.x < parameters.width && global_id.y < parameters.height) {
+        let X_idx = global_id.y * parameters.width + global_id.x;
 
         set_X_value(X_idx, u32(0), f32(global_id.x));
         set_X_value(X_idx, u32(1), f32(global_id.y));
@@ -205,12 +248,31 @@ fn seathru_estimate_neighborhoodmap_preprocessing(
     }
 }
 
+@compute @workgroup_size(64, 4, 1)
+fn dbscan_main(
+    @builtin(global_invocation_id) global_id: vec3<u32>
+) {
+    let x = global_id.x;
+    var y = get_neighbor_point(x, global_id.y);
+
+    if (x < parameters.count &&
+        y < parameters.count &&
+        x != y &&
+        (is_core_point(x) || is_core_point(y)) &&
+        calculate_distance(x, y) < parameters.epsilon) {
+
+            if (is_core_point(y) || !is_member_of_any_cluster(y)) {
+                union_trees(x, y);
+            }
+    }
+}
+
 @compute @workgroup_size(16, 16, 1)
 fn seathru_estimate_neighborhoodmap_postprocessing(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
-    if (global_id.x < neighborhoodmap_parameters.width && global_id.y < neighborhoodmap_parameters.height) {
-        let idx = global_id.y * neighborhoodmap_parameters.width + global_id.x;
+    if (global_id.x < parameters.width && global_id.y < parameters.height) {
+        let idx = global_id.y * parameters.width + global_id.x;
 
         set_neighborhood_value(global_id.x, global_id.y, y_pred[idx]);
     }
