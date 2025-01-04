@@ -3,7 +3,7 @@ use bytemuck::{Pod, Zeroable};
 use ndarray::Array2;
 use wgpu::{util::DeviceExt, Buffer, CommandEncoder, Device, ShaderModule};
 
-use crate::{clustering::DbScanParameters, errors::Aqua3dError, gpu::get_device_and_queue};
+use crate::{clustering::{dbscan_main, dbscan_preprocessing, DbScanParameters}, errors::Aqua3dError, gpu::get_device_and_queue};
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
@@ -17,6 +17,8 @@ fn seathru_estimate_neighborhoodmap_preprocessing(
     dbscan_parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     depth_buffer: &Buffer,
+    width: usize,
+    height: usize,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
     device: &Device
@@ -61,13 +63,18 @@ fn seathru_estimate_neighborhoodmap_preprocessing(
     cpass.set_pipeline(&compute_pipeline);
     cpass.set_bind_group(0, &bind_group, &[]);
     cpass.insert_debug_marker("seathru_estimate_neighborhoodmap_preprocessing");
-    cpass.dispatch_workgroups(1, 1, 1);
+    cpass.dispatch_workgroups(
+        (width as f32 / 16f32).ceil() as u32,
+        (height as f32 / 16f32).ceil() as u32,
+        1);
 }
 
 pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Result<(), Aqua3dError> { //Array2<u32>
     let (height, width) = depths.dim();
     let count = height * width;
     let x_size = (count * 3 * size_of::<u32>()) as u64;
+    let core_points_size = (count * size_of::<u32>()) as u64;
+    let y_pred_size = (count * size_of::<u32>()) as u64;
 
     let neighborhoodmap_parameters = NeighborhoodmapParameters {
         height: height as u32,
@@ -110,6 +117,22 @@ pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Re
         mapped_at_creation: false
     });
 
+    let core_points_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("core_points_buffer"),
+        size: core_points_size,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false
+    });
+
+    let y_pred_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("y_pred_buffer"),
+        size: y_pred_size,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false
+    });
+
     let depth_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("depth_buffer"),
         contents: bytemuck::cast_slice(depths.as_slice().context("Depths should have data.")?),
@@ -126,10 +149,32 @@ pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Re
         &dbscan_parameters_buffer,
         &x_buffer,
         &depth_buffer,
+        width,
+        height,
         &shader_module,
         &mut encoder,
         &device,
     );
+
+    dbscan_preprocessing(
+        &dbscan_parameters_buffer, 
+        &x_buffer, 
+        &core_points_buffer, 
+        &y_pred_buffer, 
+        count as u32, 
+        &shader_module, 
+        &mut encoder,
+        &device);
+
+    // dbscan_main(
+    //     &dbscan_parameters_buffer,
+    //     &x_buffer,
+    //     &core_points_buffer,
+    //     &y_pred_buffer,
+    //     count as u32,
+    //     &shader_module,
+    //     &mut encoder,
+    //     &device);
 
     Ok(())
 }

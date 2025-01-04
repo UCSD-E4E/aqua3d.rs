@@ -14,7 +14,7 @@ pub struct DbScanParameters {
     pub min_points: u32
 }
 
-fn dbscan_preprocessing(
+pub fn dbscan_preprocessing(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,
@@ -67,7 +67,7 @@ fn dbscan_preprocessing(
     cpass.dispatch_workgroups((count as f32 / 64f32).ceil() as u32, 1, 1);
 }
 
-fn dbscan_main(
+pub fn dbscan_main(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,
