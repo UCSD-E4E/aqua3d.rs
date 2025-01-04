@@ -166,15 +166,15 @@ pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Re
         &mut encoder,
         &device);
 
-    // dbscan_main(
-    //     &dbscan_parameters_buffer,
-    //     &x_buffer,
-    //     &core_points_buffer,
-    //     &y_pred_buffer,
-    //     count as u32,
-    //     &shader_module,
-    //     &mut encoder,
-    //     &device);
+    dbscan_main(
+        &dbscan_parameters_buffer,
+        &x_buffer,
+        &core_points_buffer,
+        &y_pred_buffer,
+        count as u32,
+        &shader_module,
+        &mut encoder,
+        &device);
 
     Ok(())
 }

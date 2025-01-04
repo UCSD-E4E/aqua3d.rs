@@ -110,8 +110,6 @@ pub fn dbscan_main(
         ]
     });
 
-    let workgroup_count = (count as f32 / 16f32).ceil() as u32;
-
     let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: None,
         timestamp_writes: None
@@ -120,8 +118,8 @@ pub fn dbscan_main(
     cpass.set_bind_group(0, &bind_group, &[]);
     cpass.insert_debug_marker("dbscan_main");
     cpass.dispatch_workgroups(
-        workgroup_count, 
-        workgroup_count, 
+        (count as f32 / 64f32).ceil() as u32, 
+        1, 
         1);
 }
 
@@ -249,6 +247,6 @@ mod tests {
         let mut npz_writer = NpzWriter::new(File::create("./data/y_pred.npz").unwrap());
         npz_writer.add_array("y_pred", &y_pred).unwrap();
 
-        //assert_eq!(y_pred == truth_u32, true);
+        // assert_eq!(y_pred == truth_u32, true);
     }
 }

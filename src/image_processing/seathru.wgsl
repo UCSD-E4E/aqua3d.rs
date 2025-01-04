@@ -125,21 +125,24 @@ fn dbscan_preprocessing(
     }
 }
 
-@compute @workgroup_size(16, 16, 1)
+@compute @workgroup_size(64, 1, 1)
 fn dbscan_main(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
-    if (global_id.x < parameters.count &&
-        global_id.y < parameters.count && 
-        global_id.x != global_id.y &&
-        is_core_point(global_id.x) &&
-        calculate_distance(global_id.x, global_id.y) < parameters.epsilon) {
+    var y: u32;
+    for (y = u32(0); y < parameters.count; y += u32(1)) {
+        if (global_id.x < parameters.count &&
+            global_id.x != global_id.y &&
+            is_core_point(global_id.x) &&
+            calculate_distance(global_id.x, y) < parameters.epsilon) {
 
-            if (is_core_point(global_id.y) || !is_member_of_any_cluster(global_id.y)) {
-                union_trees(global_id.x, global_id.y);
-            }
+                if (is_core_point(y) || !is_member_of_any_cluster(y)) {
+                    union_trees(global_id.x, y);
+                }
+        }
     }
 }
+
 
 // =============================== End Copied from DBScan - DO NOT EDIT ========================================
 
