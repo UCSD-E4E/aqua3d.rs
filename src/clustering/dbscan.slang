@@ -51,20 +51,20 @@ void union_trees(uint x_idx, uint y_idx) {
     }
 }
 
-uint find_root(uint x_idx) {
-    var idx = x_idx;
-
-    var counter = 0;
-    while (tree[idx] != idx) {
-        idx = tree[idx];
-
-        counter += 1;
-        if (counter >= 10) {
-            break;
-        }
+[ForceInline]
+uint find_root(const uint idx)
+{
+  int curr = tree[idx];
+  if (curr != idx) {
+    
+    int next, prev = idx;
+    while (curr > (next = tree[curr])) {
+      tree[prev] = next;
+      prev = curr;
+      curr = next;
     }
-
-    return idx;
+  }
+  return curr;
 }
 
 bool is_member_of_any_cluster(uint x_idx) {
@@ -116,7 +116,6 @@ void dbscan_main(
         global_id.x != global_id.y &&
         is_core_point(global_id.x) &&
         calculate_distance(global_id.x, global_id.y) < parameters.epsilon) {
-
             if (is_core_point(global_id.y) || !is_member_of_any_cluster(global_id.y)) {
                 union_trees(global_id.x, global_id.y);
             }

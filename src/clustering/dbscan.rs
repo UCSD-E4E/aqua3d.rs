@@ -137,7 +137,7 @@ fn dbscan_main(
         ]
     });
 
-    let workgroup_count = (count as f32 / 64f32).ceil() as u32;
+    let workgroup_count = (count as f32 / 16f32).ceil() as u32;
 
     let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: None,
@@ -316,7 +316,7 @@ mod tests {
     use std::fs::File;
 
     use ndarray::Array2;
-    use ndarray_npy::NpzReader;
+    use ndarray_npy::{NpzReader, NpzWriter};
 
     use crate::clustering::dbscan::dbscan;
 
@@ -333,10 +333,8 @@ mod tests {
 
         let y_pred = dbscan(&x_f32, epsilon, min_points).await.unwrap();
 
-        let (count, _dim) = x.dim();
-        for i in 0..count {
-            println!("{}", y_pred[i]);
-        }
+        let mut npz_writer = NpzWriter::new(File::create("./data/y_pred.npz").unwrap());
+        npz_writer.add_array("y_pred", &y_pred).unwrap();
 
         //assert_eq!(y_pred == truth_u32, true);
     }

@@ -129,9 +129,12 @@ fn compile_files() -> Result<()> {
         target_path.push(format!("{}.spv", source_path.file_stem().context("Should have file stem")?.to_string_lossy()));
 
         let mut compiler_command = Command::new(&slangc_path);
-        compiler_command.arg(&source_path).arg("-o").arg(target_path);
+        compiler_command.arg("-fvk-use-entrypoint-name").arg(&source_path).arg("-o").arg(target_path);
 
-        compiler_command.status().expect("compiler failed to execute.");
+        let output = compiler_command.output().expect("compiler failed to execute.");
+        if !output.status.success() {
+            panic!("slangc returned an error.");
+        }
 
         println!("cargo::rerun-if-changed={}", source_path.as_os_str().to_string_lossy());
     }
