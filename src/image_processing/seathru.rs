@@ -3,23 +3,20 @@ use bytemuck::{Pod, Zeroable};
 use ndarray::Array2;
 use wgpu::{util::DeviceExt, Buffer, CommandEncoder, Device, ShaderModule};
 
-use crate::{clustering::dbscan_preprocessing, errors::Aqua3dError, gpu::get_device_and_queue};
+use crate::{errors::Aqua3dError, gpu::get_device_and_queue};
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
-struct NeighborhoodmapParameters {
-    pub count: u32,
-    pub dim: u32,
+struct EstimateNeighborhoodmapParameters {
     pub epsilon: f32,
-    pub min_points: u32,
     pub height: u32,
     pub width: u32
 }
 
 fn seathru_estimate_neighborhoodmap_preprocessing(
-    neighborhoodmap_parameters_buffer: &Buffer,
-    x_buffer: &Buffer,
+    estimate_neighborhoodmap_parameters_buffer: &Buffer,
     depth_buffer: &Buffer,
+    neighborhoodmap_buffer: &Buffer,
     width: usize,
     height: usize,
     shader_module: &ShaderModule,
@@ -42,15 +39,67 @@ fn seathru_estimate_neighborhoodmap_preprocessing(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: neighborhoodmap_parameters_buffer.as_entire_binding()
+                resource: estimate_neighborhoodmap_parameters_buffer.as_entire_binding()
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: x_buffer.as_entire_binding()
+                resource: depth_buffer.as_entire_binding()
             },
             wgpu::BindGroupEntry {
-                binding: 4,
+                binding: 2,
+                resource: neighborhoodmap_buffer.as_entire_binding()
+            }
+        ]
+    });
+
+    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+        label: None,
+        timestamp_writes: None
+    });
+    cpass.set_pipeline(&compute_pipeline);
+    cpass.set_bind_group(0, &bind_group, &[]);
+    cpass.insert_debug_marker("seathru_estimate_neighborhoodmap_preprocessing");
+    cpass.dispatch_workgroups(
+        (width as f32 / 16f32).ceil() as u32,
+        (height as f32 / 16f32).ceil() as u32,
+        1);
+}
+
+fn seathru_estimate_neighborhoodmap_main(
+    estimate_neighborhoodmap_parameters_buffer: &Buffer,
+    depth_buffer: &Buffer,
+    neighborhoodmap_buffer: &Buffer,
+    width: usize,
+    height: usize,
+    shader_module: &ShaderModule,
+    encoder: &mut CommandEncoder,
+    device: &Device
+) {
+    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &shader_module,
+        entry_point: Some("seathru_estimate_neighborhoodmap_main"),
+        compilation_options: Default::default(),
+        cache: None
+    });
+
+    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: estimate_neighborhoodmap_parameters_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
                 resource: depth_buffer.as_entire_binding()
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: neighborhoodmap_buffer.as_entire_binding()
             }
         ]
     });
@@ -69,11 +118,9 @@ fn seathru_estimate_neighborhoodmap_preprocessing(
 }
 
 fn seathru_estimate_neighborhoodmap_postprocessing(
-    neighborhoodmap_parameters_buffer: &Buffer,
-    y_pred_buffer: &Buffer,
+    estimate_neighborhoodmap_parameters_buffer: &Buffer,
     neighborhoodmap_buffer: &Buffer,
-    width: usize,
-    height: usize,
+    count: u32,
     shader_module: &ShaderModule,
     encoder: &mut CommandEncoder,
     device: &Device
@@ -94,14 +141,10 @@ fn seathru_estimate_neighborhoodmap_postprocessing(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: neighborhoodmap_parameters_buffer.as_entire_binding()
+                resource: estimate_neighborhoodmap_parameters_buffer.as_entire_binding()
             },
             wgpu::BindGroupEntry {
-                binding: 3,
-                resource: y_pred_buffer.as_entire_binding()
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
+                binding: 2,
                 resource: neighborhoodmap_buffer.as_entire_binding()
             }
         ]
@@ -113,123 +156,34 @@ fn seathru_estimate_neighborhoodmap_postprocessing(
     });
     cpass.set_pipeline(&compute_pipeline);
     cpass.set_bind_group(0, &bind_group, &[]);
-    cpass.insert_debug_marker("seathru_estimate_neighborhoodmap_postprocessing");
+    cpass.insert_debug_marker("seathru_estimate_neighborhoodmap_preprocessing");
     cpass.dispatch_workgroups(
-        (width as f32 / 16f32).ceil() as u32,
-        (height as f32 / 16f32).ceil() as u32,
+        (count as f32 / 256f32).ceil() as u32,
+        1,
         1);
 }
-
-pub fn dbscan_main(
-    neighborhoodmap_parameters_buffer: &Buffer,
-    x_buffer: &Buffer,
-    core_points_buffer: &Buffer,
-    y_pred_buffer: &Buffer,
-    count: u32,
-    shader_module: &ShaderModule,
-    encoder: &mut CommandEncoder,
-    device: &Device
-) {
-    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None,
-        layout: None,
-        module: &shader_module,
-        entry_point: Some("dbscan_main"),
-        compilation_options: Default::default(),
-        cache: None
-    });
-
-    let bind_group_layout = compute_pipeline.get_bind_group_layout(0);
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: neighborhoodmap_parameters_buffer.as_entire_binding()
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: x_buffer.as_entire_binding()
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: core_points_buffer.as_entire_binding()
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: y_pred_buffer.as_entire_binding()
-            }
-        ]
-    });
-
-    let workgroup_count = (count as f32 / 64f32).ceil() as u32;
-
-    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-        label: None,
-        timestamp_writes: None
-    });
-    cpass.set_pipeline(&compute_pipeline);
-    cpass.set_bind_group(0, &bind_group, &[]);
-    cpass.insert_debug_marker("dbscan_main");
-    cpass.dispatch_workgroups(
-        workgroup_count, 
-        4, 
-        1);
-}
-
 
 pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Result<Array2<u32>, Aqua3dError> {
     let (height, width) = depths.dim();
     let count = height * width;
-    let x_size = (count * 3 * size_of::<u32>()) as u64;
-    let core_points_size = (count * size_of::<u32>()) as u64;
-    let y_pred_size = (count * size_of::<u32>()) as u64;
     let neighborhoodmap_size = (count * size_of::<u32>()) as u64;
 
-    let neighborhoodmap_parameters = NeighborhoodmapParameters {
-        count: count as u32,
-        dim: 3,
+    let estimate_neighborhoodmap_parameters = EstimateNeighborhoodmapParameters {
         epsilon,
-        min_points: 2,
         height: height as u32,
         width: width as u32
     };
-    let neighborhoodmap_parameters_bytes = bytemuck::bytes_of(&neighborhoodmap_parameters);
+    let estimate_neighborhoodmap_parameters_bytes = bytemuck::bytes_of(&estimate_neighborhoodmap_parameters);
 
     let (device, queue) = get_device_and_queue().await?;
     let shader_module = device.create_shader_module(wgpu::include_wgsl!("seathru.wgsl"));
 
-    let neighborhoodmap_parameters_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("neighborhoodmap_parameters_buffer"),
-        contents: neighborhoodmap_parameters_bytes,
+    let estimate_neighborhoodmap_parameters_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("estimate_neighborhoodmap_parameters_buffer"),
+        contents: estimate_neighborhoodmap_parameters_bytes,
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::UNIFORM
-    });
-
-    let x_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("x_buffer"),
-        size: x_size,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false
-    });
-
-    let core_points_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("core_points_buffer"),
-        size: core_points_size,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false
-    });
-
-    let y_pred_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("y_pred_buffer"),
-        size: y_pred_size,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false
     });
 
     let depth_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -252,41 +206,29 @@ pub async fn estimate_neighborhood_map(depths: &Array2<f32>, epsilon: f32) -> Re
     });
 
     seathru_estimate_neighborhoodmap_preprocessing(
-        &neighborhoodmap_parameters_buffer,
-        &x_buffer,
+        &estimate_neighborhoodmap_parameters_buffer,
         &depth_buffer,
+        &neighborhoodmap_buffer,
         width,
         height,
         &shader_module,
         &mut encoder,
         &device);
 
-    dbscan_preprocessing(
-        &neighborhoodmap_parameters_buffer,
-        &x_buffer, 
-        &core_points_buffer, 
-        &y_pred_buffer, 
-        count as u32, 
-        &shader_module, 
-        &mut encoder,
-        &device);
-
-    dbscan_main(
-        &neighborhoodmap_parameters_buffer,
-        &x_buffer,
-        &core_points_buffer,
-        &y_pred_buffer,
-        count as u32,
+    seathru_estimate_neighborhoodmap_main(
+        &estimate_neighborhoodmap_parameters_buffer,
+        &depth_buffer,
+        &neighborhoodmap_buffer,
+        width,
+        height,
         &shader_module,
         &mut encoder,
         &device);
 
     seathru_estimate_neighborhoodmap_postprocessing(
-        &neighborhoodmap_parameters_buffer,
-        &y_pred_buffer,
+        &estimate_neighborhoodmap_parameters_buffer,
         &neighborhoodmap_buffer,
-        width,
-        height,
+        count as u32,
         &shader_module,
         &mut encoder,
         &device);
@@ -334,7 +276,7 @@ mod tests {
         let mut npz = NpzReader::new(File::open("./data/seathru/D3/D3/depth/depthT_S04923.npz").unwrap()).unwrap();
         let depths: Array2<f32> = npz.by_name("depths").unwrap();
 
-        let neighborhood_map = estimate_neighborhood_map(&depths, 0.21).await.unwrap();
+        let neighborhood_map = estimate_neighborhood_map(&depths, 0.1).await.unwrap();
         
         let mut npz_writer = NpzWriter::new(File::create("../pyAqua3dDev/neighborhood_map.npz").unwrap());
         npz_writer.add_array("neighborhood_map", &neighborhood_map).unwrap();

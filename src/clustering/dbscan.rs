@@ -7,14 +7,14 @@ use crate::{errors::Aqua3dError, gpu::get_device_and_queue};
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
-pub struct DbScanParameters {
+struct DbScanParameters {
     pub count: u32,
     pub dim: u32,
     pub epsilon: f32,
     pub min_points: u32
 }
 
-pub fn dbscan_preprocessing(
+fn dbscan_preprocessing(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,
@@ -67,7 +67,7 @@ pub fn dbscan_preprocessing(
     cpass.dispatch_workgroups((count as f32 / 64f32).ceil() as u32, 1, 1);
 }
 
-pub fn dbscan_main(
+fn dbscan_main(
     parameters_buffer: &Buffer,
     x_buffer: &Buffer,
     core_points_buffer: &Buffer,

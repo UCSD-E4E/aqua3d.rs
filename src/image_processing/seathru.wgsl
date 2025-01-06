@@ -1,6 +1,11 @@
-// =============================== Start Copied from DBScan - DO NOT EDIT ======================================
 // Implementation of
-// https://doi.org/10.1145/3605573.3605594
+// connected components: https://doi.org/10.1145/3208040.3208041
+
+struct Parameters {
+    epsilon: f32,
+    height: u32,
+    width: u32
+}
 
 @group(0)
 @binding(0)
@@ -8,25 +13,11 @@ var<storage, read> parameters: Parameters;
 
 @group(0)
 @binding(1)
-var<storage, read_write> X: array<f32>;
+var<storage, read> depths: array<f32>;
 
 @group(0)
 @binding(2)
-var<storage, read_write> core_points: array<u32>;
-
-@group(0)
-@binding(3)
-var<storage, read_write> y_pred: array<atomic<u32>>;
-
-fn get_X_value(idx: u32, dim: u32) -> f32 { 
-    let target_idx = idx * parameters.dim + dim;
-
-    return X[target_idx];
-}
-
-fn is_core_point(idx: u32) -> bool {
-    return core_points[idx] != 0;
-}
+var<storage, read_write> neighborhood_map: array<atomic<u32>>;
 
 fn union_trees(x_idx: u32, y_idx: u32) {
     var x_root = find_root(x_idx);
@@ -41,14 +32,14 @@ fn union_trees(x_idx: u32, y_idx: u32) {
             if (x_root != y_root) {
                 var ret: u32;
                 if (x_root < y_root) {
-                    ret = atomicCompareExchangeWeak(&y_pred[y_root], y_root, x_root).old_value;
+                    ret = atomicCompareExchangeWeak(&neighborhood_map[y_root], y_root, x_root).old_value;
                     if (ret != y_root) {
                         y_root = ret;
                         repeat = true;
                     }
                 }
                 else {
-                    ret = atomicCompareExchangeWeak(&y_pred[x_root], x_root, y_root).old_value;
+                    ret = atomicCompareExchangeWeak(&neighborhood_map[x_root], x_root, y_root).old_value;
                     if (ret != x_root) {
                         x_root = ret;
                         repeat = true;
@@ -64,14 +55,14 @@ fn union_trees(x_idx: u32, y_idx: u32) {
 }
 
 fn find_root(idx: u32) -> u32 {
-    var curr = y_pred[idx];
+    var curr = neighborhood_map[idx];
     if (curr != idx) {
         var next = idx;
         var prev = idx;
         
-        while (curr > y_pred[curr]) {
-            next = y_pred[curr];
-            y_pred[prev] = next;
+        while (curr > neighborhood_map[curr]) {
+            next = neighborhood_map[curr];
+            neighborhood_map[prev] = next;
             prev = curr;
             curr = next;
         }
@@ -79,160 +70,46 @@ fn find_root(idx: u32) -> u32 {
     return curr;
 }
 
-fn is_member_of_any_cluster(x_idx: u32) -> bool {
-    return y_pred[x_idx] != x_idx;
+fn get_position(index: u32) -> vec2<u32> {
+    var position: vec2<u32>;
+    position.x = index % parameters.width;
+    position.y = index / parameters.width;
+
+    return position;
 }
 
-@compute @workgroup_size(64, 1, 1)
-fn dbscan_preprocessing(
-    @builtin(global_invocation_id) global_id: vec3<u32>
-) {
-    if (global_id.x < parameters.count) {
-        var neighbor_count: u32 = 0;
+fn get_depth(position: vec2<u32>) -> f32 {
+    let idx = get_index(position);
 
-        if (parameters.min_points > 2 ) {
-            var i: u32;
-            for (i = u32(0); i < parameters.count; i += u32(1)) {
-                if (i != global_id.x && neighbor_count < parameters.min_points) {
-                    let dist = calculate_distance(global_id.x, i);
-
-                    if (dist <= parameters.epsilon) {
-                        neighbor_count += u32(1);
-                    }
-                }
-            }
-        }
-        else {
-            // When min_points == 2, all points are core points if they are within epsilon distance.
-            neighbor_count = parameters.min_points;
-        }
-
-        if (neighbor_count >= parameters.min_points) {
-            core_points[global_id.x] = neighbor_count;
-        }
-        else {
-            core_points[global_id.x] = u32(0);
-        }
-
-        y_pred[global_id.x] = global_id.x; // Initialize the y_pred.
-    }
+    return depths[idx];
 }
 
-// =============================== End Copied from DBScan - DO NOT EDIT ========================================
+fn set_neighborhood(position: vec2<u32>, value: u32) {
+    let idx = get_index(position);
 
-fn calculate_distance(x_idx: u32, y_idx: u32) -> f32 {
-    const inf: f32 = 0x1.fffffep+127f;
-
-    let diff1 = u32(get_X_value(x_idx, u32(0))) - u32(get_X_value(y_idx, u32(0)));
-    let diff2 = u32(get_X_value(x_idx, u32(1))) - u32(get_X_value(y_idx, u32(1)));
-    if (sqrt(f32((diff1 * diff1) + (diff2 * diff2))) > 1) {
-        return inf;
-    }
-    
-    let diff = get_X_value(x_idx, u32(2)) - get_X_value(y_idx, u32(2));
-    return sqrt(diff * diff);
-}
-
-struct Parameters {
-    count: u32,
-    dim: u32,
-    epsilon: f32,
-    min_points: u32,
-    height: u32,
-    width: u32
-}
-
-@group(0)
-@binding(4)
-var<storage, read> depth_map: array<f32>;
-
-@group(0)
-@binding(5)
-var<storage, read_write> neighborhood_map: array<u32>;
-
-fn get_depth_value(x: u32, y: u32) -> f32 {
-    let idx = y * parameters.width + x;
-
-    return depth_map[idx];
-}
-
-fn set_X_value(idx: u32, dim: u32, value: f32) { 
-    let target_idx = idx * parameters.dim + dim;
-    X[target_idx] = value;
-}
-
-fn set_neighborhood_value(x: u32, y: u32, value: u32) {
-    let idx = y * parameters.width + x;
     neighborhood_map[idx] = value;
 }
 
-fn get_neighbor_point(x: u32, direction: u32) -> u32 {
-    var depth_pos: vec2<u32>;
-    depth_pos.x = u32(get_X_value(x, u32(0)));
-    depth_pos.y = u32(get_X_value(x, u32(1)));
+fn get_index(position: vec2<u32>) -> u32 {
+    return position.x + position.y * parameters.width;
+}
 
-    var neighbor_pos: vec2<u32>;
-    switch direction {
-        case 0u: { // North
-            if depth_pos.y == 0 { // We can't go north
-                neighbor_pos.x = parameters.count;
-                neighbor_pos.y = parameters.count;
-            }
-            else {
-                neighbor_pos.x = depth_pos.x;
-                neighbor_pos.y = depth_pos.y - 1;
-            }
-        }
-        case 1u: { // East
-            if depth_pos.x == parameters.width - 1 { // We can't go east
-                neighbor_pos.x = parameters.count;
-                neighbor_pos.y = parameters.count;
-            }
-            else {
-                neighbor_pos.x = depth_pos.x + 1;
-                neighbor_pos.y = depth_pos.y;
-            }
-        }
-        case 2u: { // South
-            if depth_pos.y == parameters.height - 1 { // We can't go south
-                neighbor_pos.x = parameters.count;
-                neighbor_pos.y = parameters.count + 1;
-            }
-            else {
-                neighbor_pos.x = depth_pos.x;
-                neighbor_pos.y = depth_pos.y - 1;
-            }
-        }
-        case 3u: { // West
-            if depth_pos.x == 0 { // We can't go west
-                neighbor_pos.x = parameters.count;
-                neighbor_pos.y = parameters.count;
-            }
-            else {
-                neighbor_pos.x = depth_pos.x - x;
-                neighbor_pos.y = depth_pos.y;
-            }
-        }
-        default: {
-            // Choosing these values because they are WAY out of the range we are processing.
-            neighbor_pos.x = parameters.count;
-            neighbor_pos.y = parameters.count;
-        }
+fn calculate_distance(a: vec2<u32>, b: vec2<u32>) -> f32 {
+    const inf: f32 = 0x1.fffffep+127f;
+
+    let diff1 = f32(a.x) - f32(b.x);
+    let diff2 = f32(a.y) - f32(b.y);
+    let xy_dist = sqrt(diff1 * diff1 + diff2 * diff2);
+    if (xy_dist > 1) {
+        return inf;
     }
 
-    var i: u32;
-    for (i = u32(0); i < parameters.count; i++) {
-        var depth_pos: vec2<u32>;
-        depth_pos.x = u32(get_X_value(x, u32(0)));
-        depth_pos.y = u32(get_X_value(x, u32(1)));
+    let diff = get_depth(a) - get_depth(b);
+    return sqrt(diff * diff);
+}
 
-        if neighbor_pos.x == depth_pos.x && 
-            neighbor_pos.y == depth_pos.y {
-            return i;
-        }
-    }
-
-    return parameters.count; // This value is out of range.
+fn check_distance(a: vec2<u32>, b: vec2<u32>) -> bool {
+    return calculate_distance(a, b) < parameters.epsilon;
 }
 
 @compute @workgroup_size(16, 16, 1)
@@ -240,40 +117,103 @@ fn seathru_estimate_neighborhoodmap_preprocessing(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
     if (global_id.x < parameters.width && global_id.y < parameters.height) {
-        let X_idx = global_id.y * parameters.width + global_id.x;
+        let idx = get_index(global_id.xy);
+        set_neighborhood(global_id.xy, idx);
 
-        set_X_value(X_idx, u32(0), f32(global_id.x));
-        set_X_value(X_idx, u32(1), f32(global_id.y));
-        set_X_value(X_idx, u32(2), get_depth_value(global_id.x, global_id.y));
-    }
-}
+        if (global_id.y > 0) { // possibly connected up
+            var up = global_id.xy;
+            up.y -= 1u;
+            let up_idx = get_index(up);
 
-@compute @workgroup_size(64, 4, 1)
-fn dbscan_main(
-    @builtin(global_invocation_id) global_id: vec3<u32>
-) {
-    let x = global_id.x;
-    var y = get_neighbor_point(x, global_id.y);
-
-    if (x < parameters.count &&
-        y < parameters.count &&
-        x != y &&
-        (is_core_point(x) || is_core_point(y)) &&
-        calculate_distance(x, y) < parameters.epsilon) {
-
-            if (is_core_point(y) || !is_member_of_any_cluster(y)) {
-                union_trees(x, y);
+            if (check_distance(global_id.xy, up)) {
+                set_neighborhood(global_id.xy, up_idx);
             }
+        }
     }
 }
 
 @compute @workgroup_size(16, 16, 1)
-fn seathru_estimate_neighborhoodmap_postprocessing(
+fn seathru_estimate_neighborhoodmap_main(
     @builtin(global_invocation_id) global_id: vec3<u32>
 ) {
     if (global_id.x < parameters.width && global_id.y < parameters.height) {
-        let idx = global_id.y * parameters.width + global_id.x;
+        let idx = get_index(global_id.xy);
 
-        set_neighborhood_value(global_id.x, global_id.y, y_pred[idx]);
+        // Up
+        if (global_id.y > 0) {
+            var up = global_id.xy;
+            up.y -= 1u;
+            let up_idx = get_index(up);
+
+            if (check_distance(global_id.xy, up)) {
+                union_trees(idx, up_idx);
+            }
+        }
+
+        // Down
+        if (global_id.y < parameters.height - 1) {
+            var down = global_id.xy;
+            down.y += 1u;
+            let down_idx = get_index(down);
+
+            if (check_distance(global_id.xy, down)) {
+                union_trees(idx, down_idx);
+            }
+        }
+
+        // Left
+        if (global_id.x > 0) {
+            var left = global_id.xy;
+            left.x -= 1u;
+            let left_idx = get_index(left);
+
+            if (check_distance(global_id.xy, left)) {
+                union_trees(idx, left_idx);
+            }
+        }
+
+        // Right
+        if (global_id.x < parameters.width - 1) {
+            var right = global_id.xy;
+            right.x += 1u;
+            let right_idx = get_index(right);
+
+            if (check_distance(global_id.xy, right)) {
+                union_trees(idx, right_idx);
+            }
+        }
     }
+}
+
+@compute @workgroup_size(256, 1, 1)
+fn seathru_estimate_neighborhoodmap_postprocessing(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>
+) {
+    let count = parameters.width * parameters.height;
+    let incr = num_workgroups.x * 256u;
+
+    var v: u32;
+    for (v = global_id.x; v < count; v += incr) {
+        var next = neighborhood_map[v];
+        var vstat = neighborhood_map[v];
+        let old = vstat;
+
+        while (vstat > next) {
+            vstat = next;
+            next = neighborhood_map[vstat];
+        }
+
+        if (old != vstat) {
+            neighborhood_map[v] = vstat;
+        }
+    }
+//   for (int v = global_id.x; v < nodes; v += incr) {
+//     int next, vstat = nstat[v];
+//     const int old = vstat;
+//     while (vstat > (next = nstat[vstat])) {
+//       vstat = next;
+//     }
+//     if (old != vstat) nstat[v] = vstat;
+//   }
 }

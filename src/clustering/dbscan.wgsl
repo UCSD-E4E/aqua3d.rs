@@ -1,5 +1,6 @@
 // Implementation of
-// https://doi.org/10.1145/3605573.3605594
+// dbscan: https://doi.org/10.1145/3605573.3605594
+// connected components: https://doi.org/10.1145/3208040.3208041
 
 struct Parameters {
     count: u32,
