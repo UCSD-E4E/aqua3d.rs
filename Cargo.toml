@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ndarray = "0.16.1"
+ndarray-stats = "0.6.0"
+thiserror = "2.0.11"
