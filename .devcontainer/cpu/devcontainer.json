@@ -1,0 +1,15 @@
+{
+	"image": "ghcr.io/ucsd-e4e/fishsense:cpu",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"vadimcn.vscode-lldb",
+				"eamodio.gitlens",
+				"VisualStudioExptTeam.vscodeintellicode",
+				"github.vscode-github-actions",
+				"ms-azuretools.vscode-docker"
+			]
+		}
+	}
+}
